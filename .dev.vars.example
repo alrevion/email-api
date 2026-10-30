@@ -1,0 +1,8 @@
+# Copy to .dev.vars for `npm run dev` (local only, never commit .dev.vars).
+API_KEY_PEPPER=change-me-long-random-string
+ADMIN_API_SECRET=change-me
+DASHBOARD_LOGIN=admin
+DASHBOARD_PASSWORD=change-me
+# Optional: real providers (without them sends fail with no_email_provider_configured)
+# BREVO_API_KEY=
+# RESEND_API_KEY=

@@ -1,0 +1,62 @@
+# Worker api-email. Replace account_id, database_id, KV ids and the routes below with your own.
+name = "api-email"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+account_id = "ef15164ffdf3e190778b8f59cd37cf67"  # Alrevion
+
+[vars]
+ENVIRONMENT = "production"
+APP_NAME = "Alrevion"
+EMAIL_PROVIDER_ORDER = "brevo,resend"
+NOREPLY_ADDRESS = "noreply@alrevion.com"
+NOREPLY_NAME = "Alrevion"
+TEAM_ADDRESS = "team@alrevion.com"
+TEAM_NAME = "Alrevion Team"
+# Anti-abuse: max emails to the same recipient per hour (0 = disabled).
+SEND_PER_RECIPIENT_PER_HOUR = "10"
+# Allowed origins for template "verify" vars.verify_url (comma list; must be https). No caller uses
+# verify_url yet (grepped the monorepo) — defaulted to auth.alrevion.com; update when a real
+# verify-email flow ships.
+VERIFY_URL_ALLOWED_ORIGINS = "https://auth.alrevion.com"
+# Cabinet at email.alrevion.com; the API-only host redirects "/" and "/dashboard" there.
+CABINET_URL = "https://email.alrevion.com"
+API_ONLY_HOST = "api.email.alrevion.com"
+
+# Custom domains — Cloudflare attaches DNS + cert automatically on deploy (zone alrevion.com on this account).
+# email.alrevion.com: mail cabinet at "/" + API. api.email.alrevion.com: API only ("/" redirects to the cabinet);
+# older clients still send through it — switch their EMAIL_API_URL before removing this route.
+[[routes]]
+pattern = "email.alrevion.com"
+custom_domain = true
+
+[[routes]]
+pattern = "api.email.alrevion.com"
+custom_domain = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "email-api-db"
+database_id = "473c001d-fe25-4628-b2ce-d390d048550f"
+migrations_dir = "migrations"
+
+# Mailbox storage: raw inbound .eml (in/<id>.eml) + sent attachments (sent/<id>/<i>). Free tier: 10 GB.
+[[r2_buckets]]
+binding = "MAIL"
+bucket_name = "email-api-mail"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "fc74306e84214b51b3bfe81feaea33d0"
+preview_id = "5da68b1a01574364a00e20205539f6a1"
+
+# Secrets (set via `wrangler secret put <NAME>`):
+#   API_KEY_PEPPER   (required) — HMAC pepper for API-key hashing
+#   BREVO_API_KEY    (required) — primary provider
+#   RESEND_API_KEY   (required) — fallback provider
+#   ADMIN_API_SECRET (required) — guards /admin/* (service/key issuance)
+#   DASHBOARD_LOGIN, DASHBOARD_PASSWORD — mail cabinet sign-in
+#   PERSONAL_FORWARD_ADDR (optional) — copy of every inbound message goes here; must be a verified
+#                          Email Routing destination
+#
+# Inbound is wired in the Cloudflare dashboard (one route per mailbox address, e.g. team@, support@):
+#   Email → Email Routing → Routes → custom address `support@alrevion.com` → Send to a Worker → api-email

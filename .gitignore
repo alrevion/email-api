@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.dev.vars
+.env
+
+# Wrangler
+.wrangler/
+wrangler.toml.local
+
+# Build
+dist/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+build/
+.dev.vars.*
+.env.*
+!.env.example
+!.env.sample
+!*.template
+*secret*.local
+*secrets.local/
+*.secret
+*credentials*.json
+*credentials*.xlsx
+*credentials*.csv
+~$*
+.venv/
+__pycache__/
+*.pyc
+.claude-flow/
+.omc/state/
+
+# repowise owner-digest key (local)
+.repowise/events.key
+.omc/
+.repowise/
+docs/internal/
+!.dev.vars.example
