@@ -11,6 +11,9 @@ export const DASHBOARD_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f1f3f6" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0a0c10" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Mail">
 <meta name="robots" content="noindex">
 <title>Alrevion Mail</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -73,7 +76,7 @@ input,textarea{font:inherit;color:var(--ink)}
 .fold.active:before{content:"";position:absolute;left:0;top:11px;bottom:11px;width:3px;border-radius:3px;background:var(--mark)}
 .cnt{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--dim)}
 .cnt.pill{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--accent);color:var(--on-accent);text-align:center}
-.logout{margin-top:auto;color:var(--muted)}
+.logout{margin-top:auto;color:var(--muted)}#pushBtn:not(.hidden)+.logout{margin-top:0}
 .dd{position:relative}
 .dd-btn{display:flex;align-items:center;gap:10px;width:100%;height:40px;padding:0 10px 0 14px;border:1px solid var(--line);border-radius:10px;background:transparent;text-align:left;color:var(--ink-2)}
 .dd-btn:hover{background:var(--hover)}.dd-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dd-btn .ic{color:var(--dim)}
@@ -184,6 +187,7 @@ input,textarea{font:inherit;color:var(--ink)}
       <button class="compose-btn" id="newBtn"><span data-ic="pencil"></span>Написать</button>
       <div id="box"></div>
       <div class="folders" id="folders"></div>
+      <button class="fold hidden" id="pushBtn" style="margin-top:auto"><span data-ic="bell"></span><span>Уведомления</span><span class="cnt" id="pushState"></span></button>
       <button class="fold logout" id="logoutBtn"><span data-ic="logout"></span><span>Выйти</span></button>
     </nav>
     <div class="list"><div id="rows"></div><button class="more hidden" id="moreBtn">Показать ещё</button></div>
@@ -269,7 +273,8 @@ input,textarea{font:inherit;color:var(--ink)}
   // ---- auth ----
   var poll=null;
   function showApp(){el("login").classList.add("hidden");el("app").classList.remove("hidden");emptyPane();
-    loadBoxes().then(loadList);clearInterval(poll);poll=setInterval(function(){loadBoxes();if(!S.offset)loadList(true);},30000);}
+    loadBoxes().then(loadList);pushInit();var t=new URLSearchParams(location.search).get("t");
+    if(t){history.replaceState(null,"","/");openThread(t);}clearInterval(poll);poll=setInterval(function(){loadBoxes();if(!S.offset)loadList(true);},30000);}
   function showLogin(){clearInterval(poll);el("app").classList.add("hidden");el("login").classList.remove("hidden");}
   el("loginForm").addEventListener("submit",function(e){e.preventDefault();var b=el("loginBtn");b.disabled=true;el("loginErr").textContent="";
     fetch("/dashboard/api/login",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
@@ -278,6 +283,35 @@ input,textarea{font:inherit;color:var(--ink)}
       else el("loginErr").textContent=r.status===429?"Слишком много попыток. Вход с этого IP закрыт на 24 часа.":r.status===503?"Логин и пароль не настроены на сервере.":"Неверный логин или пароль.";
     }).catch(function(){b.disabled=false;el("loginErr").textContent="Нет связи с сервером. Проверьте интернет.";});});
   el("logoutBtn").addEventListener("click",function(){api("/logout",{method:"POST"}).finally(showLogin);});
+
+  // ---- push notifications: service worker + Web Push (iOS: only once added to the Home Screen) ----
+  var swReg=null;
+  function pushOk(){return "serviceWorker" in navigator&&"PushManager" in window&&"Notification" in window;}
+  var iosBrowser=/iP(hone|ad|od)/.test(navigator.userAgent)&&!navigator.standalone;
+  function pushInit(){if(!("serviceWorker" in navigator))return;
+    navigator.serviceWorker.register("/sw.js").then(function(r){swReg=r;
+      if(!pushOk()&&!iosBrowser)return;el("pushBtn").classList.remove("hidden");
+      return r.pushManager?r.pushManager.getSubscription().then(function(sub){
+        if(sub)api("/push/subscribe",{method:"POST",body:JSON.stringify(sub)}).catch(function(){}); // keep the server copy fresh
+        pushState(!!sub);}):pushState(false);}).catch(function(){});}
+  function pushState(on){el("pushState").textContent=on?"вкл":"выкл";el("pushBtn").setAttribute("data-on",on?"1":"");}
+  if("serviceWorker" in navigator)navigator.serviceWorker.addEventListener("message",function(e){
+    if(e.data&&e.data.t){drawer(false);openThread(e.data.t);}});
+  el("pushBtn").addEventListener("click",function(){
+    if(iosBrowser){toast("На iPhone уведомления работают из приложения: «Поделиться» → «На экран „Домой“», затем откройте его оттуда.",{icon:"bell",sticky:true});return;}
+    if(!swReg||!pushOk())return;
+    swReg.pushManager.getSubscription().then(function(sub){
+      if(sub)return sub.unsubscribe().then(function(){pushState(false);toast("Уведомления выключены");
+        return api("/push/unsubscribe",{method:"POST",body:JSON.stringify({endpoint:sub.endpoint})});});
+      return Notification.requestPermission().then(function(p){
+        if(p!=="granted")throw new Error("Уведомления запрещены в настройках браузера");
+        return api("/push/key").then(j);}).then(function(d){
+        if(!d.key)throw new Error("Push не настроен на сервере");
+        var b=atob(d.key.replace(/-/g,"+").replace(/_/g,"/")),k=new Uint8Array(b.length);for(var i=0;i<b.length;i++)k[i]=b.charCodeAt(i);
+        return swReg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:k});}).then(function(sub){
+        return api("/push/subscribe",{method:"POST",body:JSON.stringify(sub)}).then(function(r){if(!r.ok)throw new Error("сервер не сохранил подписку");
+          pushState(true);toast("Уведомления включены",{icon:"check"});});});
+    }).catch(function(e){toast((e&&e.message)||"Не удалось включить уведомления",{icon:"alert",bad:true});});});
 
   // ---- sidebar ----
   var boxDD=null;
@@ -288,7 +322,8 @@ input,textarea{font:inherit;color:var(--ink)}
   function renderFolders(){el("folders").innerHTML=FOLDERS.map(function(f){var dr=f[0]==="drafts",n=dr?S.drafts:S.unread[f[0]];
     return '<button class="fold'+(S.folder===f[0]?" active":"")+'" data-f="'+f[0]+'"'+(S.folder===f[0]?' aria-current="page"':"")+'>'+ic(f[2])+
       '<span>'+f[1]+'</span>'+(n?'<span class="cnt'+(f[0]==="inbox"?" pill":"")+'">'+n+'</span>':"")+'</button>';}).join("");
-    var total=S.unread.inbox||0;document.title=(total?"("+total+") ":"")+"Alrevion Mail";}
+    var total=S.unread.inbox||0;document.title=(total?"("+total+") ":"")+"Alrevion Mail";
+    if(navigator.setAppBadge)(total?navigator.setAppBadge(total):navigator.clearAppBadge()).catch(function(){});}
   function drawer(open){el("side").classList.toggle("open",open);el("scrim").classList.toggle("open",open);}
   el("folders").addEventListener("click",function(e){var b=e.target.closest(".fold");if(!b)return;
     S.folder=b.getAttribute("data-f");S.offset=0;renderFolders();drawer(false);el("app").classList.remove("reading");loadList();});
@@ -485,3 +520,43 @@ input,textarea{font:inherit;color:var(--ink)}
 </script>
 </body>
 </html>`;
+
+
+export const MANIFEST = JSON.stringify({
+  name: 'Alrevion Mail',
+  short_name: 'Mail',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  background_color: '#f1f3f6',
+  theme_color: '#407bd8',
+  icons: [
+    { src: '/icon-180.png', sizes: '180x180', type: 'image/png' },
+    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+  ],
+});
+
+// Push only, no offline cache: the cabinet is useless without the network anyway.
+export const SERVICE_WORKER = `
+self.addEventListener("install", function () { self.skipWaiting(); });
+self.addEventListener("activate", function (e) { e.waitUntil(self.clients.claim()); });
+self.addEventListener("push", function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) {}
+  var jobs = [self.registration.showNotification(d.title || "Новое письмо", {
+    body: d.body || "", tag: d.tid || undefined, icon: "/icon-180.png", badge: "/icon-180.png", data: { t: d.tid || "" }
+  })];
+  if (self.navigator.setAppBadge && d.unread) jobs.push(self.navigator.setAppBadge(d.unread).catch(function () {}));
+  e.waitUntil(Promise.all(jobs));
+});
+self.addEventListener("notificationclick", function (e) {
+  e.notification.close();
+  var t = (e.notification.data || {}).t || "";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) {
+      if ("focus" in list[i]) { list[i].postMessage({ t: t }); return list[i].focus(); }
+    }
+    return self.clients.openWindow(t ? "/?t=" + encodeURIComponent(t) : "/");
+  }));
+});
+`;

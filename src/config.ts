@@ -13,6 +13,7 @@ export interface Env {
   BREVO_API_KEY?: string;
   RESEND_API_KEY?: string;
   ADMIN_API_SECRET?: string;
+  VAPID_PRIVATE_KEY?: string; // P-256 private JWK (JSON) for Web Push; unset = push disabled
 
   // Vars
   EMAIL_PROVIDER_ORDER?: string; // "brevo,resend"

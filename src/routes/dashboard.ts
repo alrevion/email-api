@@ -12,6 +12,7 @@ import type { OutgoingAttachment } from '../providers';
 import { createSessionCookie, clearSessionCookie, verifySession } from '../dashboard/session';
 import { isBlocked, registerFailure, clearLockout } from '../dashboard/lockout';
 import { Drafts, cleanDraft } from '../drafts';
+import { vapidPublicKey } from '../push';
 
 interface ComposeBody {
   from?: string;
@@ -118,6 +119,39 @@ export function createDashboardRoutes(db: Database, config: Config) {
       unread: await mailbox(c).unreadCounts(),
       drafts: await drafts(c).count(),
     });
+  });
+
+  // --- push notifications (Web Push; on iOS only from the home-screen app) ---
+  app.get('/dashboard/api/push/key', async (c: Context) => {
+    await requireSession(c, config);
+    const jwk = (c.env as Env).VAPID_PRIVATE_KEY;
+    if (!jwk) throw new ApiError('push_disabled', 'VAPID_PRIVATE_KEY not configured', 503);
+    return c.json({ ok: true, key: vapidPublicKey(jwk) });
+  });
+
+  app.post('/dashboard/api/push/subscribe', async (c: Context) => {
+    await requireSession(c, config);
+    const b = (await c.req.json().catch(() => null)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null;
+    const endpoint = String(b?.endpoint || '');
+    const { p256dh = '', auth = '' } = b?.keys || {};
+    const b64u = /^[A-Za-z0-9_-]+$/;
+    if (!endpoint.startsWith('https://') || endpoint.length > 1000 || !b64u.test(p256dh) || !b64u.test(auth)) {
+      throw new ApiError('invalid_request', 'Bad subscription', 400);
+    }
+    await (c.env as Env).DB.prepare(
+      `INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES (?, ?, ?)
+       ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`
+    )
+      .bind(endpoint, p256dh, auth)
+      .run();
+    return c.json({ ok: true });
+  });
+
+  app.post('/dashboard/api/push/unsubscribe', async (c: Context) => {
+    await requireSession(c, config);
+    const b = (await c.req.json().catch(() => null)) as { endpoint?: string } | null;
+    await (c.env as Env).DB.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ?`).bind(String(b?.endpoint || '')).run();
+    return c.json({ ok: true });
   });
 
   // --- drafts ---
